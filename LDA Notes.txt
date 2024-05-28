@@ -1,0 +1,36 @@
+LDA:
+- Makes more restrictive normality/Gaussian assumptions than Logistic, hence expected to perform better when these assumptions are met
+- Offers more insights into the data because not only estimates  probability of labels but also the features.
+- LDA has a linear log odds boundary
+- Assumes that the predictors are normally distributed
+- LDA assumes that the covariance matrix of the features remains the same across all classes of the target variable
+
+QDA:
+Can perform better in the presence of a limited number of training observations because it does make some assumptions about the form of the decision boundary.
+QDA can provide a non-linear separation boundary across classes of the target variable
+Since QDA generalizes LDA and it is less restrictive, it is expected that the covariance assumption also be generalized, hence it is assumed to be different for each class.
+Logistic Regression (LR):
+Has a linear boundary while LDA has a linear log odds boundary. QDA has a quadratic decision boundary, hence it can accurately model a wider range of problems than can the linear methods.
+models the conditional probability of outcome Y based on the predictor variable(s) X on the basis of the logistic function.
+makes no assumptions about the distribution of the predictors
+does not assume that the features are normally distributed
+considered to be from the class of models called discriminative models that model conditional probability of target variable given the features
+uses Maximum Likelihood Estimation (MLE)
+LR makes no assumptions or requirements on the probability distribution of or the covariance among the predictor variables X while LDA assumes that they are Gaussian distributed and that covariance is common for all predictors. QDA relaxes the requirement of common variance among predictors at the expense of complexity and potentially higher variance/lower bias relative to LDA.
+LR is undoubtedly and squarely regression if we understand by regression as an algorithm of the form Y = aX + b... that models predictors X vs outcome Y.
+LR follows that model and the linear part is with regard to the logit (log odds). Ergo, the 'S' shape curve that you mentioned.
+Output of LR is a number which is translated into a classification only after testing against a threshold. Under the hood, LR spits out a real number (in the mathematical definition of the term) just like Ordinary Least Squares regression for continuous numerical outcome variables.
+Comparison
+LDA/QDA: Assumes that the features are normally distributed. Make use of Bayes theorem. Considered to be from class of generative models which model the joint probability of the target variable and the features.
+LDA assumes that the covariance matrix of the feaures remains the same across all classes of the target variable while QDA is more flexible and allows the covariance matrix of the feaures to change across different classes of the target variable.
+This results in the QDA model having additional parameters compared to LDA and therefore it takes longer to train. In return for this additional complexity, while LDA can only provide a linear separation boundary.
+Linear Discriminant Analysis and Quadratic Discriminant Analysis, on the other hand, models the probability of each predictors variable X belonging to each of class of Y on the basis of Bayes Theorem.
+Linear Discriminant Analysis (LDA) and Quadratic Discriminant Analysis (QDA) can be used for both binary and multi-class classification...Both are based on the concept of Principal Component Analysis (PCA)
+Linear coefficients are estimated differently: MLE for logistic and Estimated mean and variance based on Gaussian assumptions for LDA
+LDA & QDA are often preferred over logistic regression when there are more than two non-ordinal response classes
+Covariance
+LDA: common variance
+LDA assumes common variance among the predictors, resulting in the simplification of the mathematics to a linear model. The upshot, provided the assumption holds in the data, is a simpler, linear model with higher bias/lower variance. The downsides is that as the dataset increases in size, the assumption may not hold, and therefore classification performance may suffer.
+QDA: non-common variance
+QDA assumes non-common variance among the predictor, hence the mathematics result in a quadratic model better suited to larger datasets where the assumption of common variance is not met or warranted. The bias/variance trade-off underlies the different assumptions between LDA and QDA.
+In practical terms, as/if the size of the dataset increases and the likelihood of common variance decreases, QDA is potentially preferable. Conversely, for smaller datasets where the common variance assumption holds, LDA is potentially preferable.

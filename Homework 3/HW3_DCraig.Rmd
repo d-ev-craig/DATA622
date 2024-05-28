@@ -1,0 +1,237 @@
+---
+title: "HW3_DCraig"
+author: "Daniel Craig"
+date: "2023-12-03"
+output: rmdformats::readthedown
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE, message = FALSE, echo = TRUE, warning = FALSE, error = FALSE)
+```
+
+```{r Libraries, echo= FALSE}
+library(knitr)
+library(data.table)
+library(readr)
+library(dplyr)
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(tree)
+library(cowplot)
+library(rmarkdown)
+```
+|   This will be using code from a past post about Decision Trees to compare versus SVMs. That post can be found [here](https://rpubs.com/devcraig/DATA622as2_re). Specifically, we will be using the results from Decision Tree #2 which had the highest performance.
+  
+## Articles
+
+ - [Article 1](https://towardsdatascience.com/comparative-study-on-classic-machine-learning-algorithms-24f9ff6ab222)
+ - [Article 2](https://www.researchgate.net/publication/338959106_A_comparative_analysis_of_SVM_K-NN_and_decision_trees_for_high_resolution_satellite_image_scene_classification)
+ - [Article 3](https://edvancer.in/logistic-regression-vs-decision-trees-vs-svm-part1/)
+ - [Article 3 Cont](https://edvancer.in/logistic-regression-vs-decision-trees-vs-svm-part2/)
+ 
+### Question 1: Which algorithm is recommended to get more accurate results?
+### Question 2: Is it better for classification or regression scenarios?
+
+|   From the sources, it does not seem that Decision Trees or SVMs are better at achieving more accurate results per type of learning (regression vs classification). They are however better suited for different types of data. In particular, Decision Trees work well for categorical data and handle collinearity well. SVMs are a good fit for when data is highly complex, but not many observations due to the computation costs. There is a regression version of SVMs called Support Vector Regressions (SVRs).
+
+### Question 3: Do you agree with the recommendations? Why?
+|   I do agree with the recommendations concerning data because of the underlying mathematics. Decision Trees handle colinearity well due to features being selected one at a time. It would not matter if two variables are colinear because in either case the most optimal feature would be selected to make a decision as the tree steps down its branches. Decision Trees also need no transformations for categorical data.
+|   Colinearity does not impact SVM as much as Linear Regression does, but SVMs are particularly useful for complex data relationships that may exist but only in very complicated forms (think higher degree multivariate regression). Rather than relying on a series of complicated functions to represent the relationships between variables, SVMs represent the relationships by distance between observations. This is great for complex data, but pays a price when computation is concerned for many observations.
+ 
+
+# Analysis
+```{r Load, echo = FALSE, warning = FALSE}
+#Load in data and format correctly
+    npData<-read_csv("NPBase.csv")
+    npData$gold <- as.numeric(npData$gold)
+    dataModel <- data.frame(npData)
+    dataModel$win <- as.factor(dataModel$win)
+    dataModel$lane <- as.factor(dataModel$lane)
+    dataModel$lane_role <- as.factor(dataModel$lane_role)
+    #paged_table(dataModel)
+```
+
+## Decision Tree
+
+|    The second decision tree will use the tower damage, duration, lane, and lane role variables. Hopefully a better result is found and can be useful. Below is the result from the previous assignment.
+```{r Subset, echo = FALSE}
+#Create first set of variables
+keepVars2 <- c("tower_damage","duration","lane","lane_role","win")
+
+#Select only columns that match our set of variables
+dataModel_sub2 <- dataModel[, names(dataModel) %in% keepVars2]
+#paged_table(dataModel_sub2) #Check our dataframe
+
+```
+
+```{r Partitioning, echo = FALSE}
+dataIndex <- createDataPartition(dataModel$win, p = 0.75, list = FALSE)
+#Subset based on indexes
+dataTrain2 <- dataModel_sub2[dataIndex, ]
+dataTest2 <- dataModel_sub2[-dataIndex, ]
+```
+
+```{r Model Fit, echo = FALSE}
+classTreeFit2 <- tree(win ~ ., data = dataTrain2)
+```
+
+### Results
+```{r Branch Count 2}
+pruneFit2 <- cv.tree(classTreeFit2, FUN = prune.misclass)
+
+dfPruneFit2 <- cbind(size=pruneFit2$size,dev=pruneFit2$dev)
+dfPruneFit2 <- data.frame(dfPruneFit2)
+dfPruneFit2 <- dfPruneFit2 %>% group_by(size)%>%arrange(size)%>%arrange(dev)
+#dfPruneFit2
+
+#alternative method of choosing best method 
+#dfPruneFit2$size[which.min(dfPruneFit2$dev)]
+
+bestVal2 <- dfPruneFit2$size[1]
+
+pruneFitFinal2 <- prune.misclass(classTreeFit2, best = bestVal2)
+summary(pruneFitFinal2)
+
+prunePred2 <- predict(pruneFitFinal2, dplyr::select(dataTest2, -"win"), type = "class")
+
+cm2 <- confusionMatrix(prunePred2,dataTest2$win)
+
+cm2
+```
+
+|   I've reduced the code for the previous decision trees for sake of comparison. The Decision Tree had 87.76% Accuracy, Sensitivity : 0.8182, and Specificity : 0.9259.
+
+# SVM Overview
+|   A quick summary on how Support Vector Machines (SVMs) work. SVMs create a decision boundary between observations. What seperates SVMs from other decision boundaries is that it creates **support vectors** that are optimized to be as close to its group of observations as possible, thus creating the largest gap they can between other decision boundaries and groups. From these two optimized boundaries, a more generalized decision boundary is created that maximizes the distance between the two **support vectors**, similar to finding a mid point. A useful image to represent this can be seen [here](https://towardsdatascience.com/https-medium-com-pupalerushikesh-svm-f4b42800e989): 
+```{r echo=FALSE, out.width='100%'}
+knitr::include_graphics('figs\\SVM Example.png')
+```
+
+|   Note that SVM's are great in small but complex data since they are able to handle high-dimensionality data and create equivalents in a 2D space using Kernels.
+  
+|   The main parameter that SVMs can be tuned over is **Cost**. **Cost** controls the the weight of adjustment from misclassification errors. Effectively, if a boundary causes an observation to be identified incorrectly, **Cost** determines how much correction is made. This can also improve accuracy, but lead to overfitting. Depending on the method used, these parameters can change to be sigma, scale, and more.
+|   We will be attempting to use Linear, Polynomial, and Radial Based Function Kernels for SVMs. This will be to see if the data can easily be represented by linear relationships or something more complex like Polynomial. RBF SVMs are generally good at capturing simple or complex data.
+```{r SVM Process}
+
+#SVM requires its data to be centered and scaled
+svmProcess <- preProcess(dataModel_sub2[,-1], method =c("center","scale")) #-1 to remove the win column
+
+svmProcessed <- predict(svmProcess, dataModel_sub2)
+
+paged_table(svmProcessed)
+```
+
+## Linear Kernel
+|   Linear kernels are good for data that can be linearly separated. We can determine this by either creating a linear SVM model, or performing PCA and attempting to plot the data in a scatterplot. We will start with a linear kernel and a tuning grid for C with combinations ranging from 0 - 50.
+
+```{r SVM Partition, warning= FALSE}
+#Subset based on indexes
+trainSVM <- svmProcessed[dataIndex, ]
+testSVM <- svmProcessed[-dataIndex, ]
+
+#Create Tuning Grid
+tuneLinear <- expand.grid(C = seq(0, 50, length = 50))
+
+#tuneLength, when set inside train(), will choose how many tune options are used from the tuning grid, limiting the number of tuned combinations
+#if you have 30 tune combinations in your grid, and have tuneLength 15, only 15 of those tune combinations will be used
+
+svmRTuned <- train(win ~., trainSVM,
+                   method = "svmLinear",
+                   tuneGrid = tuneLinear,
+                   trControl = trainControl(method = "cv")
+                   )
+
+svmRTuned$finalModel
+paged_table(svmRTuned$results)
+```
+```{r Plot Linear}
+plot(svmRTuned)
+```
+  
+|   We can see that our tuning parameters chose C = 10.2 as the best performer, although it is marginally better than other values of C near 1. Typically, cost is grouped into values <1, 1 - 10, and >10. If this model does not generalize well to our test set, then we may choose a cost parameter that is lower to avoid overfitting.
+  
+```{r Test Perf Linear}
+#Test set performance
+svmRPreds <- predict(svmRTuned, newdata = testSVM[-1])
+
+postResample(pred = svmRPreds, obs = testSVM$win)
+
+varImp(svmRTuned)
+```
+|   Our linear SVM performed well at 83% accuracy and .63 Kappa. Our model sees lane_role as useless, so if we are to continue testing model features, it may be best to remove lane_role. Tower_damage was the msot important as expected from prior experience.
+
+## Polynomial Kernel
+
+|   Let's contrast this with a kernel that assumes a higher dimensionality like "polySVM" which assumes a polynomial relationship. 
+
+```{r polySVM, warning= FALSE}
+#Create Tuning Grid
+tunePoly <- expand.grid(degree = seq(0, 5, length = 10), # Values for polynomial degree
+                        scale = c(TRUE,FALSE), #whether to scale the data
+                        C = seq(0, 15, length = 30)) #cost param
+
+#tuneLength, when set inside train(), will choose how many tune options are used from the tuning grid, limiting the number of tuned combinations
+#if you have 30 tune combinations in your grid, and have tuneLength 15, only 15 of those tune combinations will be used
+
+svmPoly <- train(win ~., trainSVM,
+                   method = "svmPoly",
+                   tuneGrid = tunePoly,
+                   trControl = trainControl(method = "cv")
+                   )
+
+svmPoly$finalModel
+svmPoly$bestTune
+paged_table(svmPoly$results)
+
+```
+```{r Plot Poly}
+plot(svmPoly)
+```
+
+```{r Test Perf Poly}
+#Test set performance
+svmPolyPreds <- predict(svmPoly, newdata = testSVM[-1])
+
+postResample(pred = svmPolyPreds, obs = testSVM$win)
+
+varImp(svmPoly)
+```
+
+|   Doesn't look like our polynomial based SVM performed very well with only 69% accuracy.
+
+## Radial Basis Function Kernel
+
+|   Let's take a look at one more SVM method called Radial Basis Function Kernels which serves as an example of how the kernel trick can handle complex data. RBF Kernels use the radial distance between each point as measures of similarity/difference. Each point is considered the center of its own circle with some radius. The distance of that radius is the measurement of difference from other points. These measurements are evaluated as part of a normal distribution and are elevated to a higher dimensional space by treating their relationships to other observations as their features. This allows the algorithm to capture very complex relationships by representing observations features as relationships to other observations, rather than the original numeric representations and however they relate to each other.
+
+```{r Tune RBF}
+
+tuneRBF <- expand.grid(sigma = seq(.1,1,length = 10),    # Gamma values
+                       C = seq(1,10,length =10))
+
+svmRBF <- train(win ~., trainSVM,
+                   method = "svmRadial",
+                   tuneGrid = tuneRBF,
+                   trControl = trainControl(method = "cv")
+                   )
+
+svmRBF$finalModel
+paged_table(svmRBF$results)
+```
+
+```{r Plot RBF}
+plot(svmRBF)
+```
+
+```{r Test Perf RBF}
+#Test set performance
+svmRBFPreds <- predict(svmRBF, newdata = testSVM[-1])
+
+postResample(pred = svmRBFPreds, obs = testSVM$win)
+
+varImp(svmRBF)
+```
+|   The RBF model performed quite well with 83.67% accuracy and .6672 Kappa, which is identical to the linear model's 83.67% and Kappa 0.6672. The code was double checked and a syntax error or repeat variables do not seem to be the cause.
+
+## Comparison
+
+|   Despite performing well, RBF and Linear SVMs could not match the Decision Tree's performance at 88% accuracy, highlighting the importance of testing multiple models when approaching a task. In general, models are unique in performance to the task at hand, but models are better suited for different types of data.

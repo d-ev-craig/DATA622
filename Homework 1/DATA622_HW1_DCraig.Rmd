@@ -1,0 +1,345 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(rmarkdown)
+library(ggplot2)
+library(tidyverse)
+library(corrplot)
+library(kableExtra)
+library(caret)
+library(cowplot)
+library(randomForest)
+```
+<style type="text/css">
+  body{
+  font-size: 12pt;
+  font-family: Times New Roman;
+  line-height:2;
+}
+</style>
+
+## R Markdown
+
+```{r Load Data, warning=FALSE}
+sales_50k <- read_csv("C:/Users/dcrai/source/repos/DATA622/Homework 1/data/50000 Sales Records.csv")
+
+sales_1.5m <- read_csv("C:/Users/dcrai/source/repos/DATA622/Homework 1/data/1500000 Sales Records.csv")
+
+sales_100 <- read_csv("C:/Users/dcrai/source/repos/DATA622/Homework 1/data/100 Sales Records.csv")
+
+sales_10k <- read_csv("C:/Users/dcrai/source/repos/DATA622/Homework 1/data/10000 Sales Records.csv")
+```
+
+|   The two datasets chosen for this analysis were the 50,000 and 10,000 sales csv files from [here](https://excelbianalytics.com/wp/downloads-18-sample-csv-files-data-sets-for-testing-sales/). Both contain the below columns with column types ranging from categorical, string, date, and numeric.
+
+
+```{r}
+attributes(sales_1.5m)$names
+
+sum(sapply(sales_100, is.na)) #no null values
+sum(sapply(sales_1.5m, is.na)) #no null values
+sum(sapply(sales_50k, is.na)) #no null values
+sum(sapply(sales_10k, is.na)) #no null values
+```
+
+
+```{r Data Type Formatting}
+sales_1.5m[[6]] <- as.Date(sales_1.5m[[6]], format = "%m/%d/%Y")
+sales_1.5m[[8]] <- as.Date(sales_1.5m[[8]], format = "%m/%d/%Y")
+
+sales_50k[[6]] <- as.Date(sales_50k[[6]], format = "%m/%d/%Y")
+sales_50k[[8]] <- as.Date(sales_50k[[8]], format = "%m/%d/%Y")
+
+sales_10k[[6]] <- as.Date(sales_10k[[6]], format = "%m/%d/%Y")
+sales_10k[[8]] <- as.Date(sales_10k[[8]], format = "%m/%d/%Y")
+
+sales_100[[6]] <- as.Date(sales_100[[6]], format = "%m/%d/%Y")
+sales_100[[8]] <- as.Date(sales_100[[8]], format = "%m/%d/%Y")
+
+data_types <- sapply(sales_1.5m, class) #get a list of each column's data type
+
+variable_types <- data.frame(
+  Data_Type = c(data_types),
+  Variable_Type = c('Categorical','Categorical', #Region
+  'Categorical','Categorical', #Item Type
+  'Ordinal','Ordinal', #Order Prio
+  'Ordinal','Ordinal', #Order Id
+  'Discrete','Continuous', #Units Sold
+  'Continuous', 'Continuous', #Unit Cost
+  'Continuous','Continuous') # Total Cost
+)
+variable_types
+```
+
+## EDA
+|   To explore the data, frequency counts and categories for categorical variables will be plotted. The "heavier" plots that would not fit well with others are plotted on their own.
+
+```{r Barplots}
+# Calculate unique categories
+Region_Categories <- count(unique(sales_1.5m[,1]))
+Country_Categories <- count(unique(sales_1.5m[,2]))
+Item_Type_Categories <- count(unique(sales_1.5m[,3]))
+Sales_Channel_Categories <- count(unique(sales_1.5m[,4]))
+Order_Prio_Categories <- count(unique(sales_1.5m[,5]))
+
+Region_Freq <- as.data.frame(table(sales_1.5m$Region))
+Country_Freq <- as.data.frame(table(sales_1.5m$Country))
+Item_Type_Freq <- as.data.frame(table(sales_1.5m$'Item Type'))
+Sales_Channel_Freq <- as.data.frame(table(sales_1.5m$'Sales Channel'))
+Order_Priority_Freq <- as.data.frame(table(sales_1.5m$'Order Priority'))
+
+region_plot <- ggplot(Region_Freq, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  theme_minimal() +
+  labs(title = "Distribution of Categories", x = "Region", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+country_plot <- ggplot(Country_Freq, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  theme_minimal() +
+  labs(title = "Distribution of Categories", x = "Country", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+item_plot <- ggplot(Item_Type_Freq, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  theme_minimal() +
+  labs(title = "Distribution of Categories", x = "Item Type", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+sales_channel_plot <- ggplot(Sales_Channel_Freq, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  theme_minimal() +
+  labs(title = "Distribution of Categories", x = "Sales Channel", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+order_prio_plot <- ggplot(Order_Priority_Freq, aes(x = Var1, y = Freq)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  theme_minimal() +
+  labs(title = "Distribution of Categories", x = "Order Priority", y = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_grid(item_plot,sales_channel_plot,order_prio_plot)
+```
+|   We can see that almost all categories thus far have nearly equal distributions across order types, sales chennels, and item types. But the frequencies of country and region differentiate themselves in that manner.
+<br>
+<br>
+|   Below we see that Europe and Sub-Saharan Africa dominate the number of sales orders.
+```{r}
+region_plot
+```
+```{r}
+summary(Region_Freq$Freq)
+print(Region_Categories)
+```
+|   There are so many different countries that the plot is effectively illegible. Instead, it will be more useful to take a look at the Frequency table and note that Syria, New Zeland, and Liechtenstein are at the top.
+```{r}
+country_plot
+```
+```{r}
+Country_Freq %>% arrange(desc(Freq))
+summary(Country_Freq$Freq)
+print(Country_Categories)
+```
+
+
+```{r Discrete/Cont EDA}
+hist_unit_price <- hist(sales_1.5m$'Unit Price', 
+     main = "Histogram of Unit Price",
+     xlab = "Values",
+     ylab = "Frequency",
+     col = "blue",          # Color of bars
+     border = "black")     # Color of bar borders
+#     xlim = c(min_value, max_value),  # Set x-axis limits if needed
+#     breaks = n_bins)
+
+
+hist_unit_cost <- hist(sales_1.5m$'Unit Cost', 
+     main = "Histogram of Unit Cost",
+     xlab = "Values",
+     ylab = "Frequency",
+     col = "blue",          # Color of bars
+     border = "black")
+
+
+hist_tot_rev <- hist(sales_1.5m$'Total Revenue', 
+     main = "Histogram of Total Revenue",
+     xlab = "Values",
+     ylab = "Frequency",
+     col = "blue",          # Color of bars
+     border = "black")
+
+hist_tot_cost <- hist(sales_1.5m$'Total Cost', 
+     main = "Histogram of Total Cost",
+     xlab = "Values",
+     ylab = "Frequency",
+     col = "blue",          # Color of bars
+     border = "black")
+
+hist_tot_prof <- hist(sales_1.5m$'Total Profit', 
+     main = "Histogram of 'Total Profit'",
+     xlab = "Values",
+     ylab = "Frequency",
+     col = "blue",          # Color of bars
+     border = "black")
+```
+|   After viewing some of the histograms, we see some logarithmic distributions. There is certainly going to be a relationship between unit price, cost, revenue, and profit. What would be interesting to see if there are any relationships between geographical area and order numbers or item prices. Hopefully, we will see some of this appear in our models.
+
+## Modeling
+
+|   There are many methods to analyze the data depending on the use. In fact, I would argue the purpose for analysis is as much of a driver in technique choice as the data itself. For example, let's imagine a scenario where the company had lost portions of sales records leading to a blank customer ID column (there is not one in this dataset) or blank Country column.
+|   To help narrow down potential values, this dataset was given to us a training set to create a prediction algorithm for the Country or Customer ID. This purpose would probably lend itself towards KNN, Decision Trees, or Discriminant Analysis.
+|   Let's try using kNN and RandomForests to predict what Region an order is for and see how they perform. Originally, I was going to attempt LDA/QDA instead of Random Forests, but since I run into an issue later with vector size errors due to the number of categorical variables being one shot encoded increasing the size of the data wildly, I chose to work with Random Forests.
+
+```{r KNN PreProcessing, error =TRUE}
+knnProcess_10k <- preProcess(sales_10k[,-2], method = c("center","scale","nzv"))
+
+knnProcessed_10k <- predict(knnProcess_10k, sales_10k)
+
+
+##KNN also needs dummy variables, which removes the response variable
+##     We will have to put it back in after making the dummy vars
+dummies_10k <- dummyVars(Country ~ ., data = knnProcessed_10k)
+
+dummyKNN_10k <- predict(dummies_10k, newdata = knnProcessed_10k)
+
+##Bring our response variable back in
+dummyKNN_10k <- as.data.frame(cbind(sales_10k[,2], dummyKNN_10k))
+
+```
+
+
+```{r Create Partition Index, eval=FALSE}
+trainPart_10k <- createDataPartition(dummyKNN_10k$Country, p=0.8, list=F)
+
+dummyTrainKNN_10k <- dummyKNN_10k[trainPart_10k,]
+dummyTestKNN_10k <- dummyKNN_10k[-trainPart_10k,]
+
+#nrow(dummyTrainKNN_1.5m)
+# nrow(sales_100[,2])
+# nrow(dummyTrainKNN_100)
+# nrow(dummyKNN_100)
+# nrow(trainPart_100)
+```
+
+
+```{r knn 100 Follow Through, eval = FALSE}
+knnModel_10k <- train(dummyTrainKNN_10k[,-1], dummyTrainKNN_10k[,1],
+                   method = "knn",
+                   tuneLength =10)
+
+
+knnPreds_10k <- predict(knnModel_10k, newdata = dummyTestKNN_10k[,-1])
+
+dummyTest10k <- dummyTestKNN_10k[,1]
+
+class(knnPreds_10k)
+class(dummyTest10k)
+
+knnPreds_10k<- as.character(knnPreds_10k)
+
+results <- as.data.frame(cbind(knnPreds_10k,dummyTest10k))
+colnames(results) <- c("Predicted","Observed")
+
+#postResample gets test set performance values
+#postResample(pred = results[,1], obs = results[,2])
+
+results$match <- (results$Predicted == results$Observed)
+sum(results$match)
+```
+|   I tried several ways of getting postResample to work, but I am unable to find what subscript, column, index or other element I am attemping to access that is out of bounds. Both predictions and observations are the same length. Instead I will try to check for equivalency between them manually.
+
+|   Unfortunately, we only got 8 correct on our test data! That's pretty bad! Clearly a KNN method doesn't do well here. Below we can see where the KNN model valued certain variables for certain Countries, but it's probably not a good to use that as a guide!
+
+```{r}
+varimp <- varImp(knnModel_10k)
+varimp
+```
+
+
+## Random Forest
+Despite KNN being a bit of a failfure, let's try a random forest model.
+
+Luckily, Random Forests do not require pre-processing and will handle the categorical predictors without manual intervention.
+
+```{r}
+trainPartRF_50k <- createDataPartition(sales_50k$Country, p=0.7, list=F)
+
+trainRF_50k <- sales_50k[trainPartRF_50k, ]
+testRF_50k <- sales_50k[-trainPartRF_50k, ]
+```
+
+The above warning is basically stating that entries with one value, aka Near Zero Variance, can have highly skewed results even with Random Forests averaging results across many trees. We will continue and contrast our results with the 50k or more record data sets.
+
+```{r RF Model, error=TRUE}
+#gridRF <- expand.grid(mtry = seq(2,10, by = 1)) #set how many leaves/steps down to attempt for best results
+
+tuneRF <- train(Country ~., 
+                  data = trainRF_50k,
+                  method = "rf",
+                  trControl = trainControl(method = "boot",number = 10),
+                  #tuneGrid = gridRF,
+                  #bagControl= citBagCtrl
+                  )
+(rfRMSE <- min(tuneRF$results$RMSE))
+(rfRsq <- min(tuneRF$results$Rsquared))
+
+tuneRF$finalModel
+
+rfPreds_50k <- predict(tuneRF, newdata = testRF_50k[,-2]) #col index 2 is country
+
+rfPreds_50k <- as.character(rfPreds_50k)
+#postResample(pred = rfPreds_50k, obs = testRF_50k$Country)
+```
+I once again ran into this error from postResample. 'Error in `[.default`(tab, 1:m, 1:m) : subscript out of bounds' which I haven't gotten in the past when using postResample. I'll perform a similar method of establishing accuracy as before.
+
+```{r RF Acc}
+results_RF <- as.data.frame(cbind(rfPreds_50k,testRF_50k$Country))
+colnames(results_RF) <- c("Predicted","Observed")
+
+
+results_RF$match <- results$Predicted == results$Observed
+sum(results_RF$match)
+
+```
+|   This one got absolutely zero of them right. It seems that both the models I picked were pretty awful! This really makes me suspicious that I've missed someting critical.
+
+```{r}
+results_RF
+```
+
+## Questions
+
+1. Are the columns of your data correlated?
+
+Some of the data is clearly correlated. Order pricing, revenue, item price, and item stock all impact each other, as well as clearly the Region and Country columns. As far as correlation between these two groups, it seems unlikely as the models performed extremely poorly.
+
+
+2. Are there labels in your data? Did that impact your choice of algorithm?
+
+It does not seem like there are labels in the data either by manual inspection or by looking on the website. Hence it did not impact my choice in algorithms.
+
+3. What are the pros and cons of each algorithm you selected?
+
+Random Forests are great for increasing performance from regular forests, are less sensitive to near zero variance or overly powerful variables, and do not require heavy pre-processing. Typically, they generalize better than normal forests. For this increase in performance, they lose they're interpretability which is why I left its decision tree plot out of the analysis. 
+
+KNN models are insensitive to outliers, are easy to understand, are well suited for multi-classing scenarios, and doesn't require specific distributions of data in terms of normality. These models do require some pre-processing, can take some computation time in very high dimensions, and different choices of 'k' (how many neighbors to include) can create drastically different answers. Luckily, models typically choose the 'k' that results in the least loss.
+
+4. How your choice of algorithm relates to the datasets (was your choice of algorithm impacted by the datasets you chose)?
+
+I specifically chose KNN due to how well it handled class distinctions in multi-class scenarios. I chose this one over LDA/QDA since I thought that the number of classes the sales orders could be attributed to were so numerous, LDA/QDA would not be able to model well.
+
+I chose Random Forests for the simplicity in pre-processing and easily understandable choices. Had it performed well, I would have looked into a normal regression based Decision Tree to see any variable importance or variable relationships.
+
+5. Which result will you trust if you need to make a business decision?
+
+Unfortunately both models performed awfully. I've actually never seen models perform this poorly and I would like to review this with someone else to see if I took a misstep somewhere. I could have chosen to predict total revenue or profit based on the variables, but that seemed like a problem easily solved by other methods than machine learning. I was more interested to see if item costs and prices had different relationships between countries.
+
+
+6. Do you think an analysis could be prone to errors when using too much data, or when using the least amount possible?
+
+I think that bigger datasets are no more error prone than smaller datasets as long as the coding framework stays relatively the same. If one dataset requires a distributed file system and the other requires loading a csv file, of course the larger dataset will be more error prone. In terms of making the wrong decisions, too much data can lead to over-specification, but that's easily managed by partitioning data.
+
+7. How does the analysis between data sets compare?
+
+Honestly, both are clear as mud. Neither model showed anything of interest. The only points of interest would be the logarithmic nature of the order pricing variables in their histograms and the geographic distribution of Europe and Sub-Saharan Africa dominating the number of orders.
+

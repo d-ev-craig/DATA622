@@ -1,0 +1,584 @@
+---
+title: "Decision Trees to Predict Wins"
+author: "Daniel Craig"
+date: '2023-05-14'
+output: rmdformats::readthedown
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE, message = FALSE, echo = TRUE, warning = FALSE, error = FALSE)
+```
+
+```{r , echo= FALSE}
+library(knitr)
+library(data.table)
+library(readr)
+library(dplyr)
+library(randomForest)
+library(caret)
+library(ggplot2)
+library(tree)
+library(cowplot)
+library(corrplot)
+library(rmarkdown)
+```
+
+<style type="text/css">
+  body{
+  font-size: 12pt;
+  font-family: Times New Roman;
+  line-height:2;
+}
+</style>
+
+## Exposition
+
+|     This work will be using a dataset about a specific professional eSport called Dota 2. It is considered one of the greatest games designed and is compared to the strategic titans like Chess and Go. OpenAI released an AI model to mimic player behavior and to compete against professionals similar to famours machines like Deep Blue or the more recent Komodo Dragon 3 and Fat Fritz 2. Dota 2 has a long and rich history akin to the best of college sports rivalries. It currently holds the top 7 highest prize pools topping out at $40 million dollars, it also has an active betting scene.
+|     A quick summary on how Dota 2 is played is required for better understanding of the data. Dota 2 is a 5v5 game played on a square map with 3 'lanes' serving as the main connection between players. Each player chooses 1 of these 3 lanes and fights over gaining gold to purchase items to assist in killing the enemy and ultimately destory the opponents' base. Each player chooses 1 of 100+ heroes, each with their own unique abilities and play styles, to compete against each other. My favorite hero to play right now is Nature's Prophet and **this analysis will be focused on what variables can be used to predict whether he wins or not.**
+|    Nature's Prophet is a hero with abilities that focus on having a global presence to support teammates, and using summoned units to deal damage to enemy buildings. As you can imagine, that may influence certain predictive variables to be more impactful than other heroes. The data used in this analysis have all been sourced from OpenDota which provides real data from real matches. The patch and date time of the data will relate to when Nature's Prophet was considered at his strongest in patch 7.31d.
+|    The variables used are all stats from the games themselves. A list and short description of them are below.
+
+**1. gold_per_min**
+|    Sometimes shortened to GPM, gold per minute represents how much gold a hero was accuring every minute. This metric can change throughout the game and is a hybrid measurement between a hero's power and player efficiency. A higher GPM means you're likely strong and efficient.
+
+
+**2. net_worth**
+|    Another measure of gold, net worth is the final amount of gold a hero is worth at the end of the game. Gold can be spent on items, most appopriately thought of as assets, as well as consumables which disappear after use. Net worth is the 'gold' standard to measure a hero's power in the game.
+
+
+**3. gold**
+|    Although it may seem redundant, gold here is just the amount of gold the player had left at the end of the game. Sometimes players are saving for a big item that they hope will change the next fight, other times they get it just in time and have no money left to buy a second life after they die.
+
+
+**4. kills**
+|    This variable is a count of kills. The more kills a hero has, the more gold they would have, but it also is a representation of how much impact they had on a game. Some heros thrive on killing other heros, where some want to avoid fighting and killing for quite some time.
+
+
+**5. tower_damage**
+|    This variable indicates how much damage a hero caused to the enemy buildings. Some heros excel at destroying buildings rather than killing.. sometimes they're good at both!
+
+
+**6.duration**
+Duration represents how long the game went in the format of 'mmss', i.e. 2412 is a 24 minutes 12 second game. Some heros are more powerful as the game goes on, while others depend on ending the game early.
+
+
+**7. lane**
+|    Lanes are symmetrical between teams, but each lane within a team is different from another. Lane 1, the 'safelane' is typically meant for gold dependent heros. Lane 2, the 'midlane' is good for heros that do well in 1v1 scenarios and scale well with both xp and gold. Lane 3, the 'offlane' is typically saved for highly survivable heros that provide utility to the team with little gold and experience.
+
+
+**8. lane_role**
+|    Across lanes, a team is divided up into farm priorities to identify who should be taking the available gold. This is denoted by the numbers 1 - 5 with 1 being the most important and 5 being the least important. Its best to interpret this as an indicator of farm level within their team. i.e. A value of 1 would indicate they were the most farmed on their team.
+
+```{r}
+#Load in data and format correctly
+    npData<-read_csv("NPBase.csv")
+    npData$gold <- as.numeric(npData$gold)
+    dataModel <- data.frame(npData)
+    dataModel$win <- as.factor(dataModel$win)
+    dataModel$lane <- as.factor(dataModel$lane)
+    dataModel$lane_role <- as.factor(dataModel$lane_role)
+    paged_table(dataModel)
+```
+## EDA
+<br>
+
+### 5 Number Summary
+|    From experience playing, it is clear there are few special features in the 5 Number Summary that are unique to Nature's Prophet. The averages for gold_per_min are higher than most other heroes, normally being around 550. Net_worth is also higher than most as this metric across heroes is typically at 17,000 to 18,000. Gold is roughly the same compared to other heroes. Tower_damage is a somewhat higher than most heroes as many sit around 8,000 or less. Duration of games is quite low at 20 minutes. Per OpenDota documentation, the numbers are read as the first two numbers being minutes and the last two numbers being seconds. Most games normally last about 30 minutes, whereas with Nature's Prophet the games average out at 2012 and the median being even smaller at 19 minutes.
+```{r}
+summary(dataModel[,-c(1,2,4,5,6,13,14)])
+```
+
+### Histograms
+
+```{r Multiple Histograms Function}
+createVariableHistograms <- function(data, var_list, response_var) {
+  #Creates a histogram of discrete variables colored by categories of response variable
+#Arguments:
+  #data: takes a dataframe
+  #var_list: accepts a list of strings of variables
+  #outcome_var: accepts a string of the variable name
+  
+  # Initialize an empty list to store plots
+  plot_list <- list()
+  
+  for (var in var_list) {
+    p <- ggplot(data, aes_string(x = var, color = response_var, fill = "win")) +
+      geom_histogram(alpha = 0.5, position = "identity") +
+      scale_color_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
+      scale_fill_manual(values = c("#999999", "#E69F00", "#56B4E9")) +
+      labs(x = paste0("Amount of ", tools::toTitleCase(var)), y = "Count of Matches", 
+           title = paste0("Matches vs ", tools::toTitleCase(var))) +
+      theme_classic()
+    
+    # Add the plot to the list
+    plot_list[[var]] <- p
+  }
+  
+  return(plot_list)
+}
+```
+
+```{r Generate Histograms}
+var_list <- c("gold", "gold_per_min", "kills", "tower_damage","net_worth","duration")
+response_var <- "win"
+plots <- createVariableHistograms(npData, var_list, response_var)
+
+#print the plots using cowplot
+plot_grid(plotlist = plots)
+```
+<br>
+
+|    In relation to winning, the variables that have their distributions higher in value are net_worth, tower_damage, kills, gold_per_min, and gold. Only duration tends to have a distribution closer to 0, which matches our previous observations. It is important to note that for gold and kills, the distributions for winning and losing are relatively close, suggesting that these may not be important variables.
+
+### Boxplots
+
+```{r CreateVariableBoxplots}
+createVariableBoxplots <- function(data, var_list, response_var) {
+  #Creates a boxplot of discrete variables colored by categories of response variable for each variable passed to it
+  #Designed to return a list of plots to be given to cowplot's plot_grid function
+  
+#Arguments:
+  #data: takes a dataframe
+  #var_list: accepts a list of strings of variables
+  #outcome_var: accepts a string of the variable name
+  
+  # Initialize an empty list to store plots
+  plot_list <- list()
+  
+  # Loop to create boxplots
+  for (var in var_list) {
+    p <- ggplot(npData, 
+                 aes_string(y = var,
+                 x = response_var, 
+                 color = response_var), 
+      fill = response_var)+                                    
+      geom_point(size = 0.8) +  #Add points for observations
+      geom_boxplot(lwd = 0.5, width = 0.5, #Create boxplot
+                    outlier.size = 0.8, 
+                    alpha = 0.7) +
+      labs(title=paste0(tools::toTitleCase(var)," vs ", tools::toTitleCase(response_var)), #title
+           xlab(tools::toTitleCase(response_var)),#xlabel
+           ylab(tools::toTitleCase(var))) + #ylabel
+      #Color section
+      scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
+      scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
+      theme_classic() #classic theme
+
+    plot_list[[var]] <- p
+  }
+  return(plot_list)
+}
+
+```
+
+```{r Generate Boxplots}
+plots <- createVariableBoxplots(npData, var_list, response_var)
+
+#print the plots using cowplot
+plot_grid(plotlist = plots)
+```
+
+|    Again we see that duration is the only distribution with wins having a lower distribution than losses. Net_worth is relatively close as is gold and gold_per_min. The difference in wins and losses in terms of kills is actually highlighted here in contrast to the histograms, highlighting the importance of viewing data in several forms.
+
+|    The code below functions, but there were so many variables it was too much and a correlation plot was created instead.
+```{r, eval = FALSE}
+createVariableScatterplots <- function(data, var_list, response_var) {
+  # Create scatterplots for combinations of two variables in var_list
+  
+  # Initialize an empty list to store plots
+  plot_list <- list()
+  
+  # Loop through variable combinations
+  for (i in 1:(length(var_list) - 1)) {
+    for (j in (i + 1):length(var_list)) {
+      var_x <- var_list[i]
+      var_y <- var_list[j]
+      
+      p <- ggplot(data, 
+                  aes_string(x = var_x, 
+                             y = var_y, 
+                             color = response_var), 
+                  fill = response_var) +
+        geom_point(size = 2) +
+        labs(
+          title = paste(var_x, " vs ", var_y),
+          x = var_x,
+          y = var_y
+        ) +
+        scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+        scale_fill_manual(values=c("#999999", "#E69F00", "#56B4E9"))+
+        theme_minimal()
+      
+      # Add the plot to the list
+      plot_list[[paste(var_x, var_y, sep = "_")]] <- p
+    }
+  }
+  
+  return(plot_list)
+}
+
+# Example usage:
+var_list <- c("gold", "gold_per_min", "kills", "tower_damage", "duration","net_worth")
+scatterplots <- createVariableScatterplots(npData, var_list,response_var)
+
+# Arrange and print the scatterplots using cowplot
+plot_grid(plotlist = scatterplots, ncol = 2)
+```
+
+### Correlations
+
+|    Checking correlation between variables, if looking at wins we see the most notable win factor being tower_damage and a negative relationship with duration. In general, both kills and tower damage have strong relationships with gold_per_min and networth.
+```{r}
+dataModelCorr <- dataModel
+dataModelCorr <- dataModelCorr[,-c(1,2,4,5,6,13,14)]
+dataModelCorr$win <- as.numeric(dataModel$win)
+correlation_matrix <- cor(dataModelCorr)
+
+corrplot(correlation_matrix)
+```
+
+## Modeling
+
+|    Two trees will be created to show differences in variance to hopefully highlight one of the weaknesses of Decision Trees. Each tree will have a different set of variables. The third and final model, a random forest, will also be created to highlight how the random forest can address certain issues with decision trees. Decision trees are typically not the best choice with many predictors or overly powerful predictors. The reason for this is that decision trees will over-fit based on the overly strong variable due to selecting the most powerful variable first to create a prediction. Random forests attempt to manage this by making many shorter trees using only a subset of the predictors. After creating many shorter trees, the "forest", it will average across them to generate a prediction. Random forests lose their interpretability and typically aren't viewed due to difficulty of viewing many trees and how the model averages across them.
+
+### Decision Tree 1
+
+|    Tree 1 will be using four variables. Gold_per_min, kills, net_worth, and gold. From the plots earlier this is expected to be weak since there was low correlation between win and the variables.
+
+```{r Subsetting Based on User Selected Variables}
+#colnames(dataModel)
+
+#Create first set of variables
+keepVars <- c("gold_per_min","kills","net_worth","gold","win")
+
+#Select only columns that match our set of variables
+dataModel_sub1 <- dataModel[, names(dataModel) %in% keepVars]
+paged_table(dataModel_sub1) #Check our dataframe
+
+```
+```{r Partitioning Tree 2}
+dataIndex <- createDataPartition(dataModel$win, p = 0.75, list = FALSE) #create list of indexes
+
+#Subset based on indexes
+dataTrain <- dataModel_sub1[dataIndex, ]
+dataTest <- dataModel_sub1[-dataIndex, ]
+```
+
+|    Below is an example of the decision tree and accuracy. We can see that the tree starts to get fairly deep, but its deviance is quite poor. Let's attempt pruning branches to help generate more accurate predictions. Recall that deviance is calculated as a measure of the difference between the observed outcomes and the predicted outcomes and is a general measurement of accuracy for a model.
+```{r}
+classTreeFit <- tree(win ~ ., data = dataTrain)
+
+summary(classTreeFit)
+plot(classTreeFit, show.node.label=TRUE)
+text(classTreeFit,pretty=0,cex=0.7)
+```
+
+#### Pruning
+
+|    We graphed the deviance drop as branches increased below by using cv.tree() which performs cross validation and prune.misclass which measures the deviance of a tree per branch. The graph below shows the minimum deviance associated to a branch, and thus the number of branches in a tree with least amount of deviance will be used to make predictions. This is one method to deal with over-fitting and variance from decision trees, the reduction of branches. One can see that higher number of branches can lead to higher deviance.
+
+```{r Branch Graph}
+pruneFit <- cv.tree(classTreeFit, FUN = prune.misclass)
+summary(pruneFit)
+
+#plot the accuracy of the predictions based on number of branches
+plot(pruneFit$size, pruneFit$dev, type = "b")
+```
+
+```{r Find Best Branch Count}
+#pruneFit has two columns that indicate size of tree and deviation
+#Here we combine the two, and order them such that the best size count is at the top
+#We then take that top row value for size and set it to a variable to be used later to create the 
+#    final pruned tree
+dfPruneFit <- cbind(size=pruneFit$size,dev=pruneFit$dev)
+dfPruneFit <- data.frame(dfPruneFit)
+dfPruneFit <- dfPruneFit %>% group_by(size)%>%arrange(size)%>%arrange(dev)
+dfPruneFit
+
+bestVal <- dfPruneFit$size[1]
+bestVal
+```
+#### Predictions and Tree #1
+
+Using our pruned predictions on the test data, below is our resulting decision tree. It is simple and clear, but as we will see it performs quite poorly. Residual mean deviance still remains high.
+```{r}
+#prune.misclass is a abbreviated form of prune.tree(method = "misclass") that takes a value 'k' 
+#    to create the tree with that number of branches
+pruneFitFinal <- prune.misclass(classTreeFit, best = bestVal)
+summary(pruneFitFinal)
+
+prunePred <- predict(pruneFitFinal, dplyr::select(dataTest, -"win"), type = "class")
+
+prunePred
+```
+
+|    When creating a Confusion Matrix, we see accuracy is poor with sensitivity at middling levels.
+```{r}
+cm <- confusionMatrix(prunePred,dataTest$win)
+
+cm
+```
+|    Below we can see one of the strengths of Decision Trees, which is their interpretability.
+```{r}
+plot(pruneFitFinal, show.node.label=TRUE)
+text(pruneFitFinal,pretty=0,cex=0.7)
+```
+
+### Decision Tree #2
+
+|    The second decision tree will use the tower damage, duration, lane, and lane role variables. Hopefully a better result is found and can be useful. Below is the data we are working with.
+```{r Subsetting Based on User Selected Variables Tree 2}
+#Create first set of variables
+keepVars2 <- c("tower_damage","duration","lane","lane_role","win")
+
+#Select only columns that match our set of variables
+dataModel_sub2 <- dataModel[, names(dataModel) %in% keepVars2]
+paged_table(dataModel_sub2) #Check our dataframe
+
+```
+```{r Partitioning}
+#Subset based on indexes
+dataTrain2 <- dataModel_sub2[dataIndex, ]
+dataTest2 <- dataModel_sub2[-dataIndex, ]
+```
+
+|    When viewing our mean deviance, it seems to be notably better than the last tree. The mis-classification error rate is also quite low. As with the last tree, pruning will be performed and predictions made based on the number of branches that provide the lowest amount of deviance.
+
+```{r}
+classTreeFit2 <- tree(win ~ ., data = dataTrain2) # The '.' means all variables to be used as explanatory variables
+
+summary(classTreeFit2)
+
+```
+#### Pruning
+
+|    The graph below shows the number of ideal branches to minimize deviance and is selected for use.
+```{r Branch Graph Tree 2}
+#cv.tree will perform cross-fold validation
+pruneFit2 <- cv.tree(classTreeFit2, FUN = prune.misclass)
+
+#plot the accuracy of the predictions based on number of branches
+plot(pruneFit2$size, pruneFit2$dev, type = "b")
+
+```
+
+```{r Branch Count 2}
+#pruneFit has two columns that indicate size of tree and deviation
+#Here we combine the two, and order them such that the best size count is at the top
+#We then take that top row value for size and set it to a variable to be used later to create the 
+#    final pruned tree
+dfPruneFit2 <- cbind(size=pruneFit2$size,dev=pruneFit2$dev)
+dfPruneFit2 <- data.frame(dfPruneFit2)
+dfPruneFit2 <- dfPruneFit2 %>% group_by(size)%>%arrange(size)%>%arrange(dev)
+dfPruneFit2
+
+#alternative method of choosing best method 
+#dfPruneFit2$size[which.min(dfPruneFit2$dev)]
+
+bestVal2 <- dfPruneFit2$size[1]
+```
+#### Predictions and Tree #2
+
+|    The residual mean deviance and mis-classification rate are notably improved from tree #1, highlighting one of the pitfalls of decision trees.
+```{r}
+#prune.misclass is a abbreviated form of prune.tree(method = "misclass") that takes a value 'k' 
+#    to create the tree with that number of branches
+pruneFitFinal2 <- prune.misclass(classTreeFit2, best = bestVal2)
+summary(pruneFitFinal2)
+
+prunePred2 <- predict(pruneFitFinal2, dplyr::select(dataTest2, -"win"), type = "class")
+
+prunePred2
+```
+
+|    This decision tree performs similarly when observing the Confusion Matrix.
+```{r}
+cm2 <- confusionMatrix(prunePred2,dataTest2$win)
+
+cm2
+```
+|    The final tree looks like below.
+```{r}
+plot(pruneFitFinal2, show.node.label=TRUE)
+text(pruneFitFinal2,pretty=0,cex=0.7)
+```
+
+## RPart Comparison
+
+|    RPart is used below to create and show other standard variance measurements seen with Decision Trees other than deviance. ROC, Sensitivity, and Specificity are all relatively acceptable levels. The ROC curve is a graphical representation of the model's ability to distinguish between the positive and negative classes across different probability thresholds. Sensitivity measures the proportion of actual positive cases that the model correctly predicts as positive. Specificity is the same as Sensitivity but for negative cases. Specificity and Sensitivity are shown in the Confusion Matrix tables with the other methods.
+```{r}
+#we change some factor levels so that caret's train function does not have issues
+levels(dataTrain2$lane) <- c("Safelane", "Mid","Offlane","Roam","Safelane Support")
+levels(dataTrain2$lane_role) <- c("Carry","Mid","Offlane","Roam")
+levels(dataTrain2$win) <- c("Lose","Win")
+
+ctrl <- trainControl(method = "cv", number = 10, summaryFunction = twoClassSummary, classProbs = TRUE)
+model <- train(win ~ ., data = dataTrain2, method = "rpart", trControl = ctrl)
+print(model)
+model$bestTune
+
+best_cp <- model$bestTune
+```
+
+### Comparitive RPart Code
+
+|    This method will work with using the complex parameter that rpart prefers above.
+```{r}
+library(rpart)
+classTreeFit2_alt <- rpart(win ~ ., data = dataTrain2, control = rpart.control(cp = best_cp))
+prunePred2_alt <- predict(classTreeFit2, newdata = dataTest2, type = "class")
+prunePred2_alt
+```
+
+```{r}
+cm2_alt <- confusionMatrix(data = prunePred2_alt, reference = dataTest2$win)
+
+cm2_alt
+cm2_alt$table
+```
+
+## Random Forest
+
+|    Random Forests address some of the issues of Decision Trees, such as variance and instability when facing overly dominant variables. Random Forests will average across trees that are created only using a limited number of predictors. To accomplish this in the code, change the tuning parameter to be mtry = sqrt(ncol(dataTrain) - 1)). This ensures that as each forest is created a reduced number of predictors are chosen for each tree. This tuning parameter lies at the heart of the purpose of random forests.
+
+|    The accuracy is about as strong as the other trees, but in general random forests generalize to testing data better than other models. This may be because there are variables that are much more important used in the second decision tree that are unable to fully express themselves due to the limiting predictor counts used by Random Forests.
+```{r}
+#Subset based on indexes
+# Note we use dataModel as the data object, not a modifed version, since for the RandomForest we will be using ALL predictors, rather than splitting
+
+dataTrain_Full <- dataModel[dataIndex, ]
+dataTest_Full <- dataModel[-dataIndex, ]
+
+trainRFModel <- train(win ~ ., data = dataTrain,
+  method = "rf",
+  trControl = trainControl(method = "repeatedcv", number = 5, repeats = 3),
+  tuneGrid = data.frame(mtry = sqrt(ncol(dataTrain) - 1)))
+
+trainConMat <- confusionMatrix(trainRFModel, newdata = dataTest)
+trainConMat
+
+summary(trainRFModel)
+
+predict(trainRFModel,newdata=dataTest)
+```
+
+|    As anticipated, the resulting accuracy is not as strong as decision tree #2 but better than tree #1, but this still shows one of the reasons why Random Forests are used. To protect from over-fitting and/or variance.
+```{r}
+testConMat <- confusionMatrix(data = dataTest$win, reference = predict(trainRFModel, newdata = dataTest))
+testConMat
+```
+# Analysis Conclusion
+|    We have learned from our decision trees that duration and tower_damage tend to be the highest order variables in accurate decision trees. If a player wants to improve their play with Nature's Prophet, finding techniques to deal more tower damage and keeping fast paced games with the hero would be best.
+|    One of the potential pitfalls of decision trees which is selection of variables and variance depending on what is chosen. Had all of the variables been placed together, the decision tree may have still only chosen tower damage and duration and overfit. Random forests help protect against this by not only using cross fold validation, but restricting the number of variables that can be used within each tree before averaging across them. In this way, random forests can protect from over-fitting and stay useful to future data.
+<br>
+<br>
+
+## Short Essay on Concerns of Decision Trees
+|    **Write a short essay explaining your analysis, and how you would address the concerns in the [blog](https://decizone.com/blog/the-good-the-bad-the-ugly-of-using-decision-trees). How can you change this perception when using the decision tree you created to solve a real problem?**
+<br>
+<br>
+
+|    The blog lists several issues with decision trees that are best discussed by topic. The first of which is maintaining changes to the decision tree. From first glance, it does not seem like these criticisms are for the machine learning method decision trees, but rather criticisms of using decision trees to guide a series of complicated decisions in un-quantifiable situations. The difference in making a decision between investing $2.5 million in a building to expand operations versus identifying critical parameters in a chemical process are entirely different. The machine learning method focuses on highlighting significant relationships between variables to create a desired outcome. The use of a decision tree as a guide of thought, or scenario handling, is focused on navigating ephemeral scenarios to future-proof or dummy-proof the handling of a process. 
+|    It is unclear how this article relates to the machine learning method, but will press forward with an analysis within the perspective of using machine learning decision trees as a predictive analytics tool.
+<br>
+
+### Changes
+*When trying to represent a complicated topic with a decision tree, you might find that it becomes large and difficult to maintain. You should look for tools that allow you to version control your decision trees.*
+<br>
+<br>
+
+|    Complicated topics with decision trees can be managed by adding a complexity parameter that punishes the model to control the depth of the tree. In the examples above, this was done by choosing the number of branches with the least deviance and least branches. Decision Trees lose their interpretability in datasets with 20+ parameters, and certainly are indiscernible when hundreds or millions of parameters are involved, but when comparing to techniques that are built to handle that complexity dimension reduction techniques such as PCA and the nature of the method itself, such as SVMs and Neural Nets are not highly interpretable either. Clusters and kNN tend to be the best "simple" models for complex relationships. All methods are able to represent variable importance, which is a common pillar in understanding how these methods are making decisions. Some models are easier to interpret than others, but when it comes to complicated relationships, not many methods can make them "simple." It is complicated because it can not be simple. The strength in Decision Trees is that they are "simple", the fact that they lose this in complex relationships is not a weakness, but a natural response found in most models. 
+
+### Subjectivity
+*A decision tree is best used in situations where the decision criteria / choices are fairly constant and the thought process is generally applicable in most cases. In cases where the choices depend on emotions or other subjective factors, creating a decision tree might be a challenge. And then there may be use cases where creating a decision tree just does not make sense.*
+<br>
+<br>
+
+|    Situations involving emotions and subjective factors are not suited for predictive analytics as a whole. Decision Trees do perform best on static measures, but outside Natural Language Processing and Language Models, accounting for subjective factors in a model will not succeed. This is less a negative of Decision Trees in particular, but one across all predictive analytics. One could argue that in a given scenario, certain choices may cost more money than others, but at the point it should be involved as a variable in the model. 
+|    Subjectivity will always be present, but rather than viewing that Decision Trees, and analytics as a whole, can not account for one's subjective preference as a negative, it should really be seen as a positive for ignoring subjective motivations. In a scenario of maximizing alcohol in a certain brew for a brewing company, the lack of subjectivity can illuminate what is needed to create a more alcoholic beverage, regardless of personal preference, as a reference point to guide decision making. The brew mixture, pressure parameters, and other variables may need to strip out all of the flavor to maximize alcoholic content, but when choosing process changes the decision tree would still highlight some combination of factors that could be focused on, such as increasing pressure and temperature. In this way, removing subjectivity can enhance decision making as it concretely defines what is important to reach a goal without doubt.
+
+
+### Evolve
+*Your decision tree may evolve in its logic over time as you get more familiar with the topic and as you get more feedback from its audience. Unless you have tools designed to facilitate continuous improvement, your decision tree may lose its effectiveness over time.*
+<br>
+<br>
+
+|    The evolutionary nature of a topic is also a poor criticism of Decision Trees. Ignoring the fact that the advancement of knowledge may be a result of a decision tree itself, having had effectiveness and then losing it, is unlikely unless the relationship in the predictors no longer exists. If the relationship in predictors no longer exists, its more likely that an entirely new problem is present that a decision tree is not well suited for. Assuming that the relationship may expand as more variables are discovered, creating new decision trees after that variable has been accounted for in modelling is not difficult.
+
+### Repeat
+*Often you find that the same logical pattern repeats in multiple branches of the same decision tree. This might mean that you are repeating the same logic at multiple places in your decision tree. In this situation, if you need to change the repeating logic, it can be a nightmare to make sure you made that change in all the places that pattern repeats. You need tools that allow you to clone your logic and easily manage cloned elements. “Life is too complicated not to be orderly.” – Martha Stewart*
+<br>
+<br>
+
+|    This criticism does not apply to machine learning decision trees. If one was creating a decision tree as a process guide using a software, yes it would be a pain to deal with, but could be simplified by using labeled sub-processes that reference the repeated process. For example, one could just place a box on the graph titled "Subprocess A", and a separate Decision Tree process is available on the side that can be modified.
+
+### Complexity
+*Any decision tree created with detailed thought process might look complicated when you see it in a diagram. Most people do not like complicated things and have a strong preference for simpler alternatives. You might be better off using decision treeing platforms that have a clean and simple interface with an awesome user experience.*
+<br>
+<br>
+
+|    Again this is clearly targeted towards creating decision trees to handle a series of events, rather than making predictions about variable relationships. Simplicity is more useful.
+
+### Familiarity
+*At times people use obscure elements/features inside their decision trees. This creates a problem for the audience that is not familiar with those elements/features. You need a standardized approach at creating and accessing decision trees.*
+<br>
+<br>
+
+|    If handling a series of events to guide an individual, then this could be handled with a legend or commonly asked questions. This may also be handled by having a rule set on creating decision trees so that trees maintain familiarity.
+<br>
+
+### Usability
+*A good decision tree might take a lot of work to create. Last thing you want is that it becomes this big diagram poster on a wall, frozen in time. Instead you want a solution that makes it easy for everyone to collaborate, share feedback and continuously improve the decision tree over time.*
+<br>
+<br>
+
+|    In the context of predictive analytics, this usability concern is handled by dedicating enough resources to it. If approached as a collaboration between an analysis team and manufacturing team, with a structured feedback and improvement cycle, this is managed. This is less a criticism of decision trees and more a criticism of effective management and company processes.
+
+
+### Mobile
+*Conventional diagramming tools allow you to create a big diagram and then share that diagram document with others. But most people are not comfortable following complex diagrams. On the contrary, a well thought out decision tree can almost behave like a dynamic application that can guide its audience to the most appropriate recommendation. Look for solutions that allow you to easily create a simple decision tree and then allow your audience to access that decision tree from any mobile browser, any time and from anywhere in the world.*
+<br>
+<br>
+
+|    Decision Trees can be made available on dashboards hosted on the web for access. The criticism of complex decision trees is repeated here, and has been addressed previously.
+<br>
+
+### Everywhere
+*Most conventional solutions need a laptop/desktop size screen to create or modify decision trees. But today we do everything on our mobile phones and so it naturally makes sense in looking for solutions that allow you to create/edit decision trees on any mobile browser.*
+<br>
+<br>
+
+|    This is true, if unreasonable, criticism of decision trees in the space of predictive analytics space.
+
+### Coding
+*Decision trees form the basic foundation for building the ever so popular chatbots today. But to create a chatbot today you almost always need a developer with advanced coding skills which makes it a big challenge. That is why you should look for a solution that allows anyone without coding skills to just create a decision tree which then becomes a dynamic conversational application serving their audience using the right tone and language. The fact that no coding skills are required in creating or modifying these decision trees means that it is easy for anyone to create and maintain these decision trees for the long term.*
+<br>
+<br>
+
+|    There are some chatbot programs that allow for low-code/no-code decision tree making. It is strange for the site to list this as a criticism, yet give the solution in its criticism.
+
+### Features
+*Conventional tools to create decision trees are very limited in scope when it comes to the interactive and multimedia features. You are so much better of with a solution that allows you to attach files, show images, upload files, attach links and share feedback specific to each and every node in your decision tree.*
+<br>
+<br>
+
+|    This is specific to a series-of-events-to-guide-individuals style tree and in that context, it would be nice to have images tied to specific events in a series of events.
+
+### Measure
+*Most decision tree solutions today cannot give you meaningful metrics and reports about how your decision tree is being used. Look for a solution that allows you to download raw data between the start and end dates of your choice so that you can analyze and find opportunities for improvement.*
+<br>
+<br>
+
+|    In the context of machine learning, it is unlikely that one was able to have the data to create a model to begin with, unless the appropriate pipelines were setup that could also report on usage. In the context of decision trees as a series-of-events-to-guide-individuals, this criticism is again a failure of management and correct feedback processes in place, rather than the failure of a decision tree. The tree itself is not responsible for ensuring people follow its guide, by whatever medium the process is created in is responsible for it whether it be how to handle calls, approving cases, or mixing chemicals.
+<br>
+<br>
+
+### Integrate
+*Today most tools need to talk to other tools in the ecosystem. Your decision tree solution better be capable to integrate with popular CRM, Ticketing, ERP and other platforms.*
+|    As addressed earlier, it is unlikely that the data provided to a machine learning decision tree did not come available through a particular pipeline and also may not be necessary even if it did not. This is a criticism of how integrated an analyst's environment is, not a criticism of the performance that a decision tree has as a model relative to other statistical models.
+<br>
+<br>
+
+## Article Conclusion
+|    The article seemed wholly unintended for machine learning or predictive analytics and was focused on decision trees as a process control and business process technique. Although it shared some similar aspects, such as referring to pipelines between data sources in a company, the article was not engaged in the ability of a statistical model to create accurate predictions. The decision tree created earlier in this document is for the use of being able to predict outcomes and highlight important relationships and variables within the context of winning a game. Whether it is used for further analysis to increase prediction accuracy for betting, showing win probabilities, or to improve how a player plays the game, such as focusing on certain performance metrics, neither are relevant to the article.
+
+
