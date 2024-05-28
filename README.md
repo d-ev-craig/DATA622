@@ -85,5 +85,55 @@ plt.tight_layout()
 plt.show()
 ```
 
-![Top 5 Words](Final Project/plots/top_5_words.png)
+![Top 5 Words](Final_Project/plots/top_5_words.png)
+
+
+
+### Predicting Prompt Category
+
+For this prediction, the "bag of words" approach will be used. It is quite simple, but is great for simple tasks. The concept behind the "bag of words" approach is to create a "bag of words" with their own relative value to each category, and use their frequency to determine what prompt category they are for.
+
+Simplicty is the advantage, while lack of semantic meaning, context, and connotation is the disadvantage.
+
+The words have already been valued with the use of the TFIDF Vectorizer. The next step is to establish the models for classification, and train them on the word values.
+
+The first model will be the Ridge Classifier that uses Ridge regression.
+
+##### Ridge Regression
+
+Ridge regression is a variant of ordinary least squares (OLS) that aims to solve issues related to multi-collinearity and overfitting due to large coefficients. Ridge accomplishes this by introducing a regularization/punish term to the cost function of OLS.
+
+$$\text{Cost}(w)= \frac{1}{2n} \sum_{n=1}^{n} (y_i - \hat{y_i})^2 + \sigma\sum_{n=1}^{n} w^2_i$$
+​
+
+The second term in the Cost equation above is the regularization term added to the OLS cost function to create Ridge Regression. This resulting cost value is then used to adjust and train the model.
+
+```
+
+from sklearn.linear_model import RidgeClassifier
+import matplotlib.pyplot as plt
+from sklearn.metrics import ConfusionMatrixDisplay
+
+# Establish our RidgeClassifier
+clf = RidgeClassifier(tol=1e-2, solver="sparse_cg")
+
+# Fit Ridge to data
+clf.fit(Vec_X_train, y_train)
+
+# Make predictions
+pred = clf.predict(Vec_X_test)
+
+# Start plot
+fig, ax = plt.subplots(figsize=(10, 5))
+
+# Confusion Matrix Disply has a method 'from_predictions' that allow you to reference predictions and actual values directly
+ConfusionMatrixDisplay.from_predictions(y_test, pred, ax=ax)
+ax.xaxis.set_ticklabels(target_names) # Establishing tick labels from the groups
+ax.yaxis.set_ticklabels(target_names) 
+_ = ax.set_title(
+    f"Confusion Matrix for {clf.__class__.__name__}" # Referencing our classifier object's name directly
+)
+plt.xticks(rotation='vertical')
+```
+![RR Conf Mat](Final_Project/plots/conf_mat.png)
 
