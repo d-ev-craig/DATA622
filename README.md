@@ -84,5 +84,6 @@ plt.legend(title='Words')
 plt.tight_layout()
 plt.show()
 ```
-![Top 5 Words]("Final Project/plots/top_5_words.png")
+
+![Top 5 Words](Final Project/plots/top_5_words.png)
 
